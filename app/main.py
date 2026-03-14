@@ -1,20 +1,19 @@
 """FastAPI application entry point.
 
-Initialises the app, configures structured JSON logging, and registers
-top-level routes (health check). OCR routes will be mounted here once
-implemented.
+Initialises the app, configures structured JSON logging via structlog,
+and registers top-level routes (health check). OCR routes will be
+mounted here once the OCR engine and postprocessors are implemented.
 """
 
-import logging
-import uuid
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+import structlog
 from fastapi import FastAPI
-from pythonjsonlogger import jsonlogger
 
 from app.core.config import get_settings
-from app.models.common import ResponseEnvelope
+from app.models.envelope import ApiResponse
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -22,20 +21,24 @@ from app.models.common import ResponseEnvelope
 
 
 def _configure_logging(log_level: str) -> None:
-    """Configure root logger to emit structured JSON logs."""
-    handler = logging.StreamHandler()
-    formatter = jsonlogger.JsonFormatter(
-        fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
+    """Configure structlog for structured JSON output."""
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(
+            # Map string level to int understood by structlog
+            getattr(__import__("logging"), log_level, 20)
+        ),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
     )
-    handler.setFormatter(formatter)
-
-    root = logging.getLogger()
-    root.handlers = [handler]
-    root.setLevel(log_level)
 
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Application lifespan
@@ -48,12 +51,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     _configure_logging(settings.log_level)
 
-    logger.info(
-        "Starting IAIA OCR Service",
-        extra={"env": settings.app_env, "version": app.version},
-    )
+    logger.info("starting", service="iaia-ocr-service", env=settings.app_env, version=app.version)
     yield
-    logger.info("Shutting down IAIA OCR Service")
+    logger.info("shutdown", service="iaia-ocr-service")
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ app = FastAPI(
     title="IAIA OCR Service",
     description=(
         "Centralized OCR-as-a-Service for Air Bank. "
-        "Provides raw OCR extraction and LLM-powered recipe processing."
+        "Provides raw OCR extraction and LLM-powered postprocessor endpoints."
     ),
     version="0.1.0",
     lifespan=lifespan,
@@ -77,20 +77,24 @@ app = FastAPI(
 
 @app.get(
     "/health",
-    response_model=ResponseEnvelope[dict],
+    response_model=ApiResponse[dict],
     summary="Health check",
     tags=["system"],
 )
-async def health_check() -> ResponseEnvelope[dict]:
+async def health_check() -> ApiResponse[dict]:
     """Return service liveness status.
 
-    Always returns HTTP 200 with status 'ok' as long as the process is running.
-    Does not perform deep dependency checks — use a dedicated readiness probe
-    for that once Azure clients are wired up.
+    Always returns HTTP 200 with status 'ok' as long as the process is
+    running. Does not perform deep dependency checks — a dedicated
+    readiness probe should be added once Azure clients are wired up.
     """
-    return ResponseEnvelope(
-        request_id=str(uuid.uuid4()),
+    start = time.perf_counter()
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+
+    return ApiResponse(
         timestamp=datetime.now(UTC),
-        processing_time_ms=0,
+        processing_time_ms=elapsed_ms,
+        ocr_model="none",
+        postprocessor=None,
         data={"status": "ok"},
     )
