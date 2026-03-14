@@ -28,6 +28,7 @@ from app.models.envelope import ApiResponse
 from app.models.request import OcrRequest
 from app.postprocessors.base import BasePostProcessor
 from app.postprocessors.registry import PostProcessorRegistry
+from app.services.cost_estimator import estimate_from_text_length
 from app.services.llm_service import LlmService, LlmServiceError
 
 logger = structlog.get_logger(__name__)
@@ -67,7 +68,6 @@ def _register_route(
     This inner function is needed to capture ``postprocessor`` in the
     closure correctly (avoids the classic loop-variable capture bug).
     """
-    # Capture everything we need in the closure
     _name = postprocessor.name
     _version = postprocessor.version
     _description = postprocessor.description
@@ -76,7 +76,6 @@ def _register_route(
     # Build the concrete response model type for FastAPI's OpenAPI schema
     concrete_response: Any = ApiResponse[_response_model]  # type: ignore[valid-type]
 
-    # Determine tags based on postprocessor name
     _tags = _tags_for(postprocessor.name)
 
     @app.post(
@@ -142,12 +141,17 @@ def _register_route(
             ) from exc
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
+        cost = estimate_from_text_length(
+            num_pages=len(ocr_result.pages),
+            content_length=len(ocr_result.content),
+        )
 
         logger.info(
             "postprocessor_success",
             postprocessor=_name,
             ocr_model=request.ocr_model,
             processing_time_ms=elapsed_ms,
+            estimated_cost_usd=cost.estimated_cost_usd,
         )
 
         return ApiResponse(
@@ -155,6 +159,7 @@ def _register_route(
             processing_time_ms=elapsed_ms,
             ocr_model=request.ocr_model,
             postprocessor=PostProcessorInfo(name=_name, version=_version),
+            cost_estimate=cost,
             data=data,
         )
 

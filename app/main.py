@@ -1,41 +1,23 @@
 """FastAPI application entry point.
 
 Initialises the app, configures structured JSON logging via structlog,
-registers the OCR engine and postprocessor routes during lifespan startup.
+registers the OCR engine and postprocessor routes during lifespan startup,
+and attaches middleware for request ID correlation and timing.
 """
 
-import logging as stdlib_logging
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import structlog
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.core.ocr_engine import OcrEngine
 from app.models.envelope import ApiResponse
-
-# ---------------------------------------------------------------------------
-# Logging setup
-# ---------------------------------------------------------------------------
-
-
-def _configure_logging(log_level: str) -> None:
-    """Configure structlog for structured JSON output."""
-    structlog.configure(
-        processors=[
-            structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(stdlib_logging, log_level, stdlib_logging.INFO)
-        ),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-    )
-
+from app.services.cost_estimator import estimate_from_pages
 
 logger = structlog.get_logger(__name__)
 
@@ -48,10 +30,9 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Run startup and shutdown logic around the application lifecycle."""
     settings = get_settings()
-    _configure_logging(settings.log_level)
+    configure_logging(settings.log_level)
 
     # Initialise singletons
-    from app.core.ocr_engine import OcrEngine
     from app.services.llm_service import LlmService
     from app.postprocessors.registry import PostProcessorRegistry
     from app.api.route_factory import register_postprocessor_routes
@@ -68,7 +49,13 @@ async def lifespan(app: FastAPI):
     # Dynamically register postprocessor routes
     register_postprocessor_routes(app, registry, ocr_engine, llm_service)
 
-    logger.info("starting", service="iaia-ocr-service", env=settings.app_env, version=app.version)
+    logger.info(
+        "starting",
+        service="iaia-ocr-service",
+        env=settings.app_env,
+        version=app.version,
+        postprocessors=[p.name for p in registry.list_all()],
+    )
     yield
     logger.info("shutdown", service="iaia-ocr-service")
 
@@ -85,6 +72,24 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# ---------------------------------------------------------------------------
+# Middleware
+# ---------------------------------------------------------------------------
+
+from app.api.middleware import RequestIdMiddleware, TimingMiddleware  # noqa: E402
+
+app.add_middleware(TimingMiddleware)
+app.add_middleware(RequestIdMiddleware)
+
+# CORS — allowed origins configurable via settings (default: all for PoC)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ---------------------------------------------------------------------------
@@ -120,5 +125,6 @@ async def health_check() -> ApiResponse[dict]:
         processing_time_ms=elapsed_ms,
         ocr_model="none",
         postprocessor=None,
+        cost_estimate=estimate_from_pages(0),
         data={"status": "ok"},
     )

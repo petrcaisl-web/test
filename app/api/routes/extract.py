@@ -14,6 +14,7 @@ from app.core.ocr_engine import OcrEngineError, UnsupportedModelError
 from app.models.envelope import ApiResponse
 from app.models.extract import ExtractDataTO
 from app.models.request import OcrRequest
+from app.services.cost_estimator import estimate_from_pages
 
 logger = structlog.get_logger(__name__)
 
@@ -24,6 +25,10 @@ router = APIRouter()
     "/extract",
     response_model=ApiResponse[ExtractDataTO],
     summary="Raw OCR extraction",
+    description=(
+        "Analyse a document with Azure Document Intelligence and return the raw OCR output. "
+        "The `postprocessor` field in the response envelope is always **null** for this endpoint."
+    ),
     tags=["Raw OCR"],
 )
 async def extract(
@@ -31,9 +36,6 @@ async def extract(
     ocr_engine: OcrEngineDep,
 ) -> ApiResponse[ExtractDataTO]:
     """Analyse a document with Azure Document Intelligence and return raw OCR output.
-
-    The `postprocessor` field in the response envelope is always **null** for
-    this endpoint — use a postprocessor endpoint for structured extraction.
 
     Args:
         request: OcrRequest containing base64-encoded document and model ID.
@@ -72,12 +74,15 @@ async def extract(
         ) from exc
 
     elapsed_ms = int((time.perf_counter() - start) * 1000)
+    num_pages = len(ocr_result.pages)
+    cost = estimate_from_pages(num_pages)
 
     logger.info(
         "ocr_extract_success",
         ocr_model=request.ocr_model,
         processing_time_ms=elapsed_ms,
-        pages=len(ocr_result.pages),
+        pages=num_pages,
+        estimated_cost_usd=cost.estimated_cost_usd,
     )
 
     return ApiResponse(
@@ -85,5 +90,6 @@ async def extract(
         processing_time_ms=elapsed_ms,
         ocr_model=request.ocr_model,
         postprocessor=None,
+        cost_estimate=cost,
         data=ocr_result,
     )
