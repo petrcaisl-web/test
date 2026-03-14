@@ -18,7 +18,7 @@ dependencies = [
     "pydantic-settings>=2.3.0",
 
     # Azure AI Document Intelligence SDK
-    "azure-ai-documentintelligence>=1.0.0",
+    "azure-ai-formrecognizer>=3.3.0",
 
     # Azure Identity for credential-free auth (managed identity / service principal)
     "azure-identity>=1.17.0",
@@ -27,7 +27,7 @@ dependencies = [
     "openai>=1.35.0",
 
     # Structured JSON logging
-    "python-json-logger>=2.0.7",
+    "structlog>=24.2.0",
 ]
 
 [project.optional-dependencies]

@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Central settings class — values are read from environment variables.
 
-    Pydantic-settings will automatically map env var names to field names
+    Pydantic-settings maps env var names to field names automatically
     (case-insensitive). A .env file is supported for local development.
     """
 
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # API key — leave empty to use Azure Identity (DefaultAzureCredential)
     azure_openai_api_key: str = ""
 
-    # Deployment name for the LLM used in recipes
+    # Deployment name for the LLM used in postprocessors
     azure_openai_deployment: str = "gpt-4o"
 
     # API version for the Azure OpenAI endpoint
@@ -71,6 +71,6 @@ def get_settings() -> Settings:
     """Return the cached application settings singleton.
 
     Using lru_cache ensures the .env file is read only once per process.
-    In tests, call get_settings.cache_clear() to reload settings.
+    In tests, call get_settings.cache_clear() to force a reload.
     """
     return Settings()
