@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  ocr-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      # Mount app/ for hot reload during local development
+      - ./app:/app/app:ro
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload

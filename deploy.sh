@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+
+PROJECT_ID="${GCP_PROJECT_ID:?Set GCP_PROJECT_ID}"
+REGION="${GCP_REGION:-europe-west1}"
+SERVICE_NAME="ocr-service"
+
+gcloud run deploy $SERVICE_NAME \
+  --source . \
+  --region $REGION \
+  --allow-unauthenticated \
+  --set-env-vars="AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=${AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT},AZURE_DOCUMENT_INTELLIGENCE_KEY=${AZURE_DOCUMENT_INTELLIGENCE_KEY},AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT},AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY},AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT}"
+
+echo "Deployed. URL:"
+gcloud run services describe $SERVICE_NAME --region $REGION --format 'value(status.url)'
