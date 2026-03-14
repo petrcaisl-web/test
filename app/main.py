@@ -1,10 +1,10 @@
 """FastAPI application entry point.
 
 Initialises the app, configures structured JSON logging via structlog,
-and registers top-level routes (health check). OCR routes will be
-mounted here once the OCR engine and postprocessors are implemented.
+registers the OCR engine and postprocessor routes during lifespan startup.
 """
 
+import logging as stdlib_logging
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -23,8 +23,6 @@ from app.models.envelope import ApiResponse
 
 def _configure_logging(log_level: str) -> None:
     """Configure structlog for structured JSON output."""
-    import logging as stdlib_logging
-
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
@@ -32,7 +30,6 @@ def _configure_logging(log_level: str) -> None:
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(
-            # Map string level to int understood by structlog
             getattr(stdlib_logging, log_level, stdlib_logging.INFO)
         ),
         context_class=dict,
@@ -53,9 +50,23 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     _configure_logging(settings.log_level)
 
-    # Initialise OCR engine singleton
+    # Initialise singletons
+    from app.core.ocr_engine import OcrEngine
+    from app.services.llm_service import LlmService
+    from app.postprocessors.registry import PostProcessorRegistry
+    from app.api.route_factory import register_postprocessor_routes
+
     ocr_engine = OcrEngine()
+    llm_service = LlmService()
+    registry = PostProcessorRegistry.build()
+
+    # Store on app.state for dependency injection
     app.state.ocr_engine = ocr_engine
+    app.state.llm_service = llm_service
+    app.state.registry = registry
+
+    # Dynamically register postprocessor routes
+    register_postprocessor_routes(app, registry, ocr_engine, llm_service)
 
     logger.info("starting", service="iaia-ocr-service", env=settings.app_env, version=app.version)
     yield
@@ -77,7 +88,7 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
-# Include routers
+# Include static routers
 # ---------------------------------------------------------------------------
 
 from app.api.routes.extract import router as extract_router  # noqa: E402
@@ -99,8 +110,7 @@ async def health_check() -> ApiResponse[dict]:
     """Return service liveness status.
 
     Always returns HTTP 200 with status 'ok' as long as the process is
-    running. Does not perform deep dependency checks — a dedicated
-    readiness probe should be added once Azure clients are wired up.
+    running.
     """
     start = time.perf_counter()
     elapsed_ms = int((time.perf_counter() - start) * 1000)
