@@ -13,6 +13,7 @@ import structlog
 from fastapi import FastAPI
 
 from app.core.config import get_settings
+from app.core.ocr_engine import OcrEngine
 from app.models.envelope import ApiResponse
 
 # ---------------------------------------------------------------------------
@@ -22,16 +23,17 @@ from app.models.envelope import ApiResponse
 
 def _configure_logging(log_level: str) -> None:
     """Configure structlog for structured JSON output."""
+    import logging as stdlib_logging
+
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
-            structlog.stdlib.add_logger_name,
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(
             # Map string level to int understood by structlog
-            getattr(__import__("logging"), log_level, 20)
+            getattr(stdlib_logging, log_level, stdlib_logging.INFO)
         ),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
@@ -51,6 +53,10 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     _configure_logging(settings.log_level)
 
+    # Initialise OCR engine singleton
+    ocr_engine = OcrEngine()
+    app.state.ocr_engine = ocr_engine
+
     logger.info("starting", service="iaia-ocr-service", env=settings.app_env, version=app.version)
     yield
     logger.info("shutdown", service="iaia-ocr-service")
@@ -66,9 +72,17 @@ app = FastAPI(
         "Centralized OCR-as-a-Service for Air Bank. "
         "Provides raw OCR extraction and LLM-powered postprocessor endpoints."
     ),
-    version="0.1.0",
+    version="1.0.0",
     lifespan=lifespan,
 )
+
+# ---------------------------------------------------------------------------
+# Include routers
+# ---------------------------------------------------------------------------
+
+from app.api.routes.extract import router as extract_router  # noqa: E402
+
+app.include_router(extract_router, prefix="/ocr")
 
 # ---------------------------------------------------------------------------
 # Health check
